@@ -339,6 +339,11 @@ impl EmbeddingLoaderType {
                 modalities: &[Embedding],
                 examples: &[ex!("google/embeddinggemma-300m")],
             },
+            Self::EmbeddingGemma2 => ArchMetadata {
+                families: &["EmbeddingGemma 2"],
+                modalities: &[Embedding],
+                examples: &[ex!("google/embeddinggemma-2")],
+            },
             Self::Qwen3Embedding => ArchMetadata {
                 families: &["Qwen3 Embedding"],
                 modalities: &[Embedding],
@@ -447,6 +452,7 @@ impl EmbeddingLoaderType {
     pub fn config_arch(&self) -> &'static str {
         match self {
             Self::EmbeddingGemma => "Gemma3TextModel",
+            Self::EmbeddingGemma2 => "EmbeddingGemma2Model",
             Self::Qwen3Embedding => "Qwen3ForCausalLM",
         }
     }

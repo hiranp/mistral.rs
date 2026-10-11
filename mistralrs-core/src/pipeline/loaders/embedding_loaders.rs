@@ -9,6 +9,7 @@ use crate::{
     attention::ATTENTION_CHUNK_SIZE,
     embedding_models::{
         embedding_gemma::{EmbeddingGemma, EmbeddingGemmaConfig},
+        embedding_gemma2::{EmbeddingGemma2, EmbeddingGemma2Config},
         qwen3_embedding::{Config as Qwen3EmbeddingConfig, Model as Qwen3EmbeddingModel},
     },
     matformer::MatformerSliceConfig,
@@ -91,6 +92,8 @@ pub trait EmbeddingModelLoader: IsqModelLoader + Send + Sync + DeviceMappedModel
 pub enum EmbeddingLoaderType {
     #[serde(rename = "embeddinggemma")]
     EmbeddingGemma,
+    #[serde(rename = "embeddinggemma2")]
+    EmbeddingGemma2,
     #[serde(rename = "qwen3embedding")]
     Qwen3Embedding,
 }
@@ -100,6 +103,7 @@ impl EmbeddingLoaderType {
     pub fn from_causal_lm_name(name: &str) -> Result<Self> {
         match name {
             "Gemma3TextModel" => Ok(Self::EmbeddingGemma),
+            "EmbeddingGemma2Model" => Ok(Self::EmbeddingGemma2),
             "Qwen3ForCausalLM" => Ok(Self::Qwen3Embedding),
             other => anyhow::bail!(
                 "Unsupported Hugging Face Transformers model class `{other}`. Please raise an issue."
@@ -113,9 +117,10 @@ impl FromStr for EmbeddingLoaderType {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "embeddinggemma" => Ok(Self::EmbeddingGemma),
+            "embeddinggemma2" => Ok(Self::EmbeddingGemma2),
             "qwen3embedding" => Ok(Self::Qwen3Embedding),
             a => Err(format!(
-                "Unknown architecture `{a}`. Possible architectures: `embeddinggemma`, `qwen3embedding`."
+                "Unknown architecture `{a}`. Possible architectures: `embeddinggemma`, `embeddinggemma2`, `qwen3embedding`."
             )),
         }
     }
@@ -125,6 +130,7 @@ impl Display for EmbeddingLoaderType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::EmbeddingGemma => write!(f, "embeddinggemma"),
+            Self::EmbeddingGemma2 => write!(f, "embeddinggemma2"),
             Self::Qwen3Embedding => write!(f, "qwen3embedding"),
         }
     }
@@ -279,6 +285,7 @@ impl AutoEmbeddingLoader {
 
         match tp {
             EmbeddingLoaderType::EmbeddingGemma => Ok(Box::new(EmbeddingGemmaLoader)),
+            EmbeddingLoaderType::EmbeddingGemma2 => Ok(Box::new(EmbeddingGemma2Loader)),
             EmbeddingLoaderType::Qwen3Embedding => Ok(Box::new(Qwen3EmbeddingLoader)),
         }
     }
@@ -565,6 +572,177 @@ impl DeviceMappedModelLoader for EmbeddingGemmaLoader {
 
     fn non_mapped_sub_models(&self) -> Option<Vec<NonMappedSubModel>> {
         None // todo
+    }
+}
+
+/// [`EmbeddingModelLoader`] for EmbeddingGemma 2 (`EmbeddingGemma2Model`, text tower).
+///
+/// [`EmbeddingModelLoader`]: https://docs.rs/mistralrs/latest/mistralrs/struct.EmbeddingModelLoader.html
+pub struct EmbeddingGemma2Loader;
+
+impl EmbeddingModelLoader for EmbeddingGemma2Loader {
+    fn load(
+        &self,
+        config: &str,
+        vb: ShardedVarBuilder,
+        normal_loading_metadata: NormalLoadingMetadata,
+        attention_mechanism: AttentionImplementation,
+    ) -> Result<Box<dyn EmbeddingModel + Send + Sync>> {
+        let cfg: EmbeddingGemma2Config = serde_json::from_str(config)?;
+
+        Ok(Box::new(EmbeddingGemma2::new(
+            &cfg,
+            vb,
+            self.is_gptx(config)?,
+            normal_loading_metadata,
+            attention_mechanism,
+        )?))
+    }
+    fn is_gptx(&self, _: &str) -> Result<bool> {
+        Ok(true)
+    }
+    fn has_causal_attention(&self, _: &str) -> Result<bool> {
+        Ok(false)
+    }
+    fn get_config_repr(&self, config: &str) -> Result<Box<dyn Debug>> {
+        let cfg: EmbeddingGemma2Config = serde_json::from_str(config)?;
+        Ok(Box::new(cfg))
+    }
+}
+
+impl IsqModelLoader for EmbeddingGemma2Loader {
+    fn promoted_isq_predicates(&self, _config: &str) -> Result<Vec<Regex>> {
+        // The text tower may be nested under `language_model.`.
+        Ok(vec![Regex::new(r"(^|\.)embed_tokens\.weight$")?])
+    }
+
+    fn isq_layer_regexes(&self, _config: &str) -> Result<Vec<Regex>> {
+        Ok(vec![
+            // Attention
+            Regex::new(r"layers\.(\d+)\.self_attn\.q_proj\.(weight|bias)$")?,
+            Regex::new(r"layers\.(\d+)\.self_attn\.k_proj\.(weight|bias)$")?,
+            Regex::new(r"layers\.(\d+)\.self_attn\.v_proj\.(weight|bias)$")?,
+            Regex::new(r"layers\.(\d+)\.self_attn\.o_proj\.(weight|bias)$")?,
+            // MLP
+            Regex::new(r"layers\.(\d+)\.mlp\.gate_proj\.(weight|bias)$")?,
+            Regex::new(r"layers\.(\d+)\.mlp\.up_proj\.(weight|bias)$")?,
+            Regex::new(r"layers\.(\d+)\.mlp\.down_proj\.(weight|bias)$")?,
+        ])
+    }
+    fn immediate_isq_predicates(&self, config: &str) -> Result<Vec<Regex>> {
+        self.isq_layer_regexes(config)
+    }
+}
+
+impl DeviceMappedModelLoader for EmbeddingGemma2Loader {
+    fn mapped_max_act_size_elems(
+        &self,
+        config: &str,
+        params: &AutoDeviceMapParams,
+    ) -> Result<usize> {
+        let AutoDeviceMapParams::Text {
+            max_seq_len,
+            max_batch_size,
+        } = params
+        else {
+            anyhow::bail!("Expected text AutoDeviceMapParams for this model!")
+        };
+
+        let cfg: EmbeddingGemma2Config = serde_json::from_str(config)?;
+
+        Ok(max_batch_size
+            * cfg.text_config.num_attention_heads
+            * max_seq_len.min(&ATTENTION_CHUNK_SIZE).pow(2))
+    }
+
+    fn non_mapped_max_act_size_elems(
+        &self,
+        _config: &str,
+        _params: &AutoDeviceMapParams,
+    ) -> Result<usize> {
+        Ok(0)
+    }
+
+    fn non_mapped_size_in_bytes(
+        &self,
+        config: &str,
+        dtype: DType,
+        weight_pack_factor: usize,
+        quantization: Option<&super::AutoDeviceMapQuantization<'_>>,
+        _matformer_config: Option<&MatformerSliceConfig>,
+    ) -> Result<usize> {
+        let cfg: EmbeddingGemma2Config = serde_json::from_str(config)?;
+        let cfg = &cfg.text_config;
+
+        let embed_tokens_pack_factor = super::promoted_tensor_pack_factor(
+            quantization,
+            "embed_tokens.weight",
+            dtype,
+            weight_pack_factor,
+        )?;
+        let embed_tokens = cfg.hidden_size * cfg.vocab_size / embed_tokens_pack_factor;
+        let norm = cfg.hidden_size;
+        let ple = cfg.hidden_size * cfg.num_hidden_layers * cfg.hidden_size_per_layer_input
+            + cfg.hidden_size_per_layer_input;
+        let embedding_projection = cfg.hidden_size * cfg.embedding_dim;
+        Ok((embed_tokens + norm + ple + embedding_projection) * dtype.size_in_bytes())
+    }
+
+    fn layer_sizes_in_bytes(
+        &self,
+        config: &str,
+        dtype: DType,
+        weight_pack_factor: usize,
+        _matformer_config: Option<&MatformerSliceConfig>,
+    ) -> Result<Vec<usize>> {
+        let cfg: EmbeddingGemma2Config = serde_json::from_str(config)?;
+        let cfg = &cfg.text_config;
+
+        let sizes = (0..cfg.num_hidden_layers)
+            .map(|layer_idx| {
+                let (head_dim, kv_heads) = cfg.geometry(layer_idx);
+                let h = cfg.hidden_size;
+                let size_q = head_dim * cfg.num_attention_heads;
+                let size_kv = head_dim * kv_heads;
+                let attn = (h * size_q + 2 * h * size_kv + size_q * h) / weight_pack_factor
+                    + bias_if!(cfg.attention_bias, size_q + 2 * size_kv + h);
+                let mlp = 3 * h * cfg.intermediate_size / weight_pack_factor;
+                // q/k norms, four layernorms, PLE gate/projection/norm, layer scalar.
+                let small = 2 * head_dim
+                    + 4 * h
+                    + 2 * h * cfg.hidden_size_per_layer_input
+                    + h
+                    + 1;
+                (attn + mlp + small) * dtype.size_in_bytes()
+            })
+            .collect();
+        Ok(sizes)
+    }
+
+    fn num_layers(&self, config: &str) -> Result<usize> {
+        let cfg: EmbeddingGemma2Config = serde_json::from_str(config)?;
+        Ok(cfg.text_config.num_hidden_layers)
+    }
+
+    fn model_config(&self, config: &str) -> Result<Box<dyn ModelConfigLike>> {
+        let cfg: EmbeddingGemma2Config = serde_json::from_str(config)?;
+        let cfg = &cfg.text_config;
+
+        Ok(Box::new(ModelConfigMetadata {
+            max_seq_len: cfg.max_position_embeddings.unwrap_or(8192),
+            num_layers: cfg.num_hidden_layers,
+            hidden_size: cfg.hidden_size,
+            num_kv_heads: cfg.num_key_value_heads,
+            num_attn_heads: cfg.num_attention_heads,
+            sliding_window: None,
+            k_head_dim: cfg.head_dim,
+            v_head_dim: cfg.head_dim,
+            kv_cache_layout: crate::paged_attention::KvCacheLayout::Standard,
+        }))
+    }
+
+    fn non_mapped_sub_models(&self) -> Option<Vec<NonMappedSubModel>> {
+        None
     }
 }
 

@@ -1,4 +1,5 @@
 pub(crate) mod embedding_gemma;
+pub(crate) mod embedding_gemma2;
 pub(crate) mod inputs_processor;
 mod layers;
 pub(crate) mod qwen3_embedding;
