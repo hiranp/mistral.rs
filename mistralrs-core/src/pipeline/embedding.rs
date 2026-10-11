@@ -8,6 +8,7 @@ use super::{
     PreProcessingMixin, TokenSource,
 };
 use crate::attention::ATTENTION_CHUNK_SIZE;
+use crate::kv_cache::NormalCache;
 use crate::device_map::{self, DeviceMapper};
 use crate::distributed::{self, WorkerTransferData};
 use crate::embedding_models::inputs_processor::{EmbeddingProcessor, ModelInputs};
@@ -67,6 +68,9 @@ pub struct EmbeddingPipeline {
     mapper: Box<dyn DeviceMapper + Send + Sync>,
     modules: Vec<Box<dyn Module + Send + Sync>>,
     processor: Arc<dyn Processor + Send + Sync>,
+    /// Empty placeholder: embedding models keep no KV cache, but `Engine::new` and
+    /// other engine paths call `Pipeline::cache()` unconditionally.
+    cache: EitherCache,
 }
 
 /// A loader for an embedding (non-quantized) model.
@@ -709,6 +713,7 @@ impl Loader for EmbeddingLoader {
             processor: Arc::new(EmbeddingProcessor {
                 has_causal_attention,
             }),
+            cache: EitherCache::Normal(NormalCache::new(0, max_seq_len)),
         })))
     }
 
@@ -786,7 +791,7 @@ impl CacheManagerMixin for EmbeddingPipeline {
         Ok(())
     }
     fn cache(&self) -> &EitherCache {
-        unreachable!()
+        &self.cache
     }
 }
 
