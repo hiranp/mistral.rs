@@ -12,6 +12,7 @@ Embedding models map text to dense vectors for semantic search, reranking, clust
 Two regularly tested options:
 
 - `google/embeddinggemma-300m`: 300M parameters, 768-dim vectors. Good general-purpose default.
+- `google/embeddinggemma-2`: 740M parameters (text tower loaded: ~130M backbone + 140M embedder), 768-dim vectors, 8192-token context. Text only; image/audio/video inputs are not supported. Prefix inputs yourself, e.g. `task: search result | query: {text}` for queries and `title: none | text: {text}` for documents.
 - `Qwen/Qwen3-Embedding-0.6B`: 600M parameters, 1024-dim vectors.
 
 ```bash

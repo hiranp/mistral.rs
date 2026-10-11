@@ -3,7 +3,12 @@ use candle_nn::Module;
 use serde::Deserialize;
 
 /// Pooling layer
+///
+/// Accepts both sentence-transformers config styles: the boolean
+/// `pooling_mode_*_tokens` flags with `word_embedding_dimension`, and the newer
+/// `pooling_mode: "mean"` string with `embedding_dimension`.
 #[derive(Deserialize, Debug, Clone)]
+#[serde(from = "RawPooling")]
 pub struct Pooling {
     pub word_embedding_dimension: usize,
     pub pooling_mode_cls_token: bool,
@@ -13,6 +18,52 @@ pub struct Pooling {
     pub pooling_mode_weightedmean_tokens: bool,
     pub pooling_mode_lasttoken: bool,
     pub include_prompt: bool,
+}
+
+#[derive(Deserialize)]
+struct RawPooling {
+    #[serde(alias = "embedding_dimension")]
+    word_embedding_dimension: usize,
+    /// Newer style: one of `cls`, `mean`, `max`, `mean_sqrt_len_tokens`,
+    /// `weightedmean`, `lasttoken`.
+    pooling_mode: Option<String>,
+    #[serde(default)]
+    pooling_mode_cls_token: bool,
+    #[serde(default)]
+    pooling_mode_mean_tokens: bool,
+    #[serde(default)]
+    pooling_mode_max_tokens: bool,
+    #[serde(default)]
+    pooling_mode_mean_sqrt_len_tokens: bool,
+    #[serde(default)]
+    pooling_mode_weightedmean_tokens: bool,
+    #[serde(default)]
+    pooling_mode_lasttoken: bool,
+    #[serde(default = "include_prompt_default")]
+    include_prompt: bool,
+}
+
+fn include_prompt_default() -> bool {
+    true
+}
+
+impl From<RawPooling> for Pooling {
+    fn from(r: RawPooling) -> Self {
+        let mode = r.pooling_mode.as_deref();
+        let is = |m: &str| mode == Some(m);
+        Self {
+            word_embedding_dimension: r.word_embedding_dimension,
+            pooling_mode_cls_token: r.pooling_mode_cls_token || is("cls"),
+            pooling_mode_mean_tokens: r.pooling_mode_mean_tokens || is("mean"),
+            pooling_mode_max_tokens: r.pooling_mode_max_tokens || is("max"),
+            pooling_mode_mean_sqrt_len_tokens: r.pooling_mode_mean_sqrt_len_tokens
+                || is("mean_sqrt_len_tokens"),
+            pooling_mode_weightedmean_tokens: r.pooling_mode_weightedmean_tokens
+                || is("weightedmean"),
+            pooling_mode_lasttoken: r.pooling_mode_lasttoken || is("lasttoken"),
+            include_prompt: r.include_prompt,
+        }
+    }
 }
 
 impl Module for Pooling {
@@ -77,4 +128,35 @@ pub struct Dense {
     pub out_features: usize,
     pub bias: bool,
     pub activation_function: DenseActivation,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pooling_accepts_legacy_flags() {
+        let p: Pooling = serde_json::from_str(
+            r#"{"word_embedding_dimension":768,"pooling_mode_cls_token":false,
+            "pooling_mode_mean_tokens":true,"pooling_mode_max_tokens":false,
+            "pooling_mode_mean_sqrt_len_tokens":false,"pooling_mode_weightedmean_tokens":false,
+            "pooling_mode_lasttoken":false,"include_prompt":true}"#,
+        )
+        .unwrap();
+        assert!(p.pooling_mode_mean_tokens && !p.pooling_mode_lasttoken);
+        assert_eq!(p.word_embedding_dimension, 768);
+    }
+
+    #[test]
+    fn pooling_accepts_sentence_transformers_6_style() {
+        // google/embeddinggemma-2/1_Pooling/config.json
+        let p: Pooling = serde_json::from_str(
+            r#"{"embedding_dimension":768,"pooling_mode":"mean","include_prompt":true}"#,
+        )
+        .unwrap();
+        assert!(p.pooling_mode_mean_tokens);
+        assert!(!p.pooling_mode_cls_token && !p.pooling_mode_lasttoken);
+        assert_eq!(p.word_embedding_dimension, 768);
+        assert!(p.include_prompt);
+    }
 }

@@ -42,6 +42,7 @@ Members and their wire/config names where relevant. The members are fieldless Py
 | Member | Wire/config name |
 | --- | --- |
 | `EmbeddingArchitecture.EmbeddingGemma` | `'embeddinggemma'` |
+| `EmbeddingArchitecture.EmbeddingGemma2` | `'embeddinggemma2'` |
 | `EmbeddingArchitecture.Qwen3Embedding` | `'qwen3embedding'` |
 
 

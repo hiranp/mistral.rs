@@ -8,7 +8,6 @@ use super::{
     PreProcessingMixin, TokenSource,
 };
 use crate::attention::ATTENTION_CHUNK_SIZE;
-use crate::kv_cache::NormalCache;
 use crate::device_map::{self, DeviceMapper};
 use crate::distributed::{self, WorkerTransferData};
 use crate::embedding_models::inputs_processor::{EmbeddingProcessor, ModelInputs};
@@ -16,6 +15,7 @@ use crate::embedding_models::{Dense, DenseActivation, Normalize, Pooling};
 use crate::embedding_normal_model_loader;
 use crate::embedding_normal_model_loader_sharded;
 use crate::get_embedding_paths;
+use crate::kv_cache::NormalCache;
 use crate::paged_attention::AttentionImplementation;
 use crate::pipeline::loaders::auto_device_map;
 use crate::pipeline::loaders::{AutoDeviceMapQuantization, QuantizationConfigShim};
@@ -25,7 +25,7 @@ use crate::pipeline::EmbeddingModel;
 use crate::pipeline::EmbeddingModelLoader;
 use crate::pipeline::{AutoEmbeddingLoader, EmbeddingModulePaths};
 use crate::pipeline::{ChatTemplate, EmbeddingModelPaths, IsqOrganization, Processor};
-use crate::pipeline::{EmbeddingGemmaLoader, Qwen3EmbeddingLoader};
+use crate::pipeline::{EmbeddingGemma2Loader, EmbeddingGemmaLoader, Qwen3EmbeddingLoader};
 use crate::prefix_cacher::PrefixCacheManagerV2;
 use crate::sequence::Sequence;
 use crate::utils::tokenizer::get_tokenizer;
@@ -155,6 +155,7 @@ impl EmbeddingLoaderBuilder {
     pub fn build(self, loader: Option<EmbeddingLoaderType>) -> Box<dyn Loader> {
         let loader: Box<dyn EmbeddingModelLoader> = match loader {
             Some(EmbeddingLoaderType::EmbeddingGemma) => Box::new(EmbeddingGemmaLoader),
+            Some(EmbeddingLoaderType::EmbeddingGemma2) => Box::new(EmbeddingGemma2Loader),
             Some(EmbeddingLoaderType::Qwen3Embedding) => Box::new(Qwen3EmbeddingLoader),
             None => Box::new(AutoEmbeddingLoader),
         };

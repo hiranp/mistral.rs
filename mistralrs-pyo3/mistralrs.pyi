@@ -272,6 +272,7 @@ class Architecture(Enum):
 @dataclass
 class EmbeddingArchitecture(Enum):
     EmbeddingGemma = "embeddinggemma"
+    EmbeddingGemma2 = "embeddinggemma2"
     Qwen3Embedding = "qwen3embedding"
 
 @dataclass
