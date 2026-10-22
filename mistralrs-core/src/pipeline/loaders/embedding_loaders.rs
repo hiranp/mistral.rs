@@ -660,6 +660,17 @@ impl IsqModelLoader for EmbeddingGemma2Loader {
 }
 
 impl DeviceMappedModelLoader for EmbeddingGemma2Loader {
+    fn activation_model_config(&self, config: &str) -> Result<super::ActivationModelConfig> {
+        let cfg: EmbeddingGemma2Config = serde_json::from_str(config)?;
+        Ok(super::ActivationModelConfig {
+            intermediate_size: cfg.text_config.intermediate_size,
+            // Embedding models have no vocabulary projection.
+            vocab_size: 0,
+            custom_prefill_mask: true,
+            ..Default::default()
+        })
+    }
+
     fn mapped_max_act_size_elems(
         &self,
         config: &str,
